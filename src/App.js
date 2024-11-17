@@ -1,19 +1,25 @@
-// src/App.js
-import React, { useState, useRef } from "react";
+import React, { useState, useRef, useEffect } from "react";
 import axios from "axios";
+import pako from "pako";
 
 function App() {
   const [messages, setMessages] = useState([]);
   const [input, setInput] = useState("");
-  const [isTyping, setIsTyping] = useState(false); // Track bot typing state
-  const [waitingForResponse, setWaitingForResponse] = useState(false); // Track waiting state
-  const inputRef = useRef(null); // Reference to the input field
-
+  const [waitingForResponse, setWaitingForResponse] = useState(false);
+  const [isProgressing, setIsProgressing] = useState(false);
+  const inputRef = useRef(null); 
+  const [abortController, setAbortController] = useState(null);
+  const messagesEndRef = useRef(null); // Reference for the end of the messages
+  const [dots, setDots] = useState(""); // State for the loading dots
 
   const handleSend = async () => {
     if (!input.trim()) return;
 
+    setDots(""); // Reset the dots when starting a new message
+
     const question = { q: input };
+    const compressedData = pako.gzip(JSON.stringify(question));
+
     const timestamp = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 
     // Add the user's question to the chat
@@ -24,55 +30,91 @@ function App() {
     setMessages(newMessages);
     setInput("");
 
+    const startTime = Date.now(); // Capture the time before sending the request
+
     try {
+      setWaitingForResponse(true);
+      setIsProgressing(true);  // Start typing effect
 
-      setWaitingForResponse(true); // Show waiting for response animation
+      const response = await axios.post("http://localhost/answer", compressedData, {
+        headers: {
+          "Content-Type": "application/json",
+          "Content-Encoding": "gzip",
+        },
+      });
 
-      // Send the question to the server
-      const response = await axios.post("http://localhost/answer", question);
+      const endTime = Date.now(); // Capture the time after receiving the response
+      const responseTime = endTime - startTime; // Calculate response time in ms
       const answer = response.data[0]?.answer || "No answer available";
 
       setWaitingForResponse(false);
 
-      // Simulate typing effect for bot response
-      await simulateTypingEffect(answer, newMessages);
+      // Start simulating typing effect
+      await simulateTypingEffect(answer, newMessages, responseTime);
+
 
     } catch (error) {
       setWaitingForResponse(false);
-      // Handle server error
       setMessages([
         ...newMessages,
         {
           sender: "bot",
           text: "Failed to fetch the answer or no matching answers found. Please try again.",
           timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-          error: true,  // Flag for error messages
+          error: true, 
         },
       ]);
     } finally {
-      setIsTyping(false); // Bot stops "typing"
       setWaitingForResponse(false); // Show waiting for response animation
     }
-    inputRef.current?.focus(); // Automatically focus back on the input field
+    inputRef.current?.focus();
+    setIsProgressing(false); // Stop typing effect
   };
 
-  const simulateTypingEffect = async (text, previousMessages) => {
-    let currentText = "";
-    const typingSpeed = 25; // Speed in ms per character
+  const simulateTypingEffect = async (text, previousMessages, responseTime) => {
+  let currentText = "";
+  const controller = new AbortController(); // Create an AbortController to handle the stop action
+  setAbortController(controller); // Store it for future reference
 
-    const timestamp = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 
-    for (let i = 0; i < text.length; i++) {
-      currentText += text[i];
+  const typingSpeed = text.length <= 200 ? 25 : 10;
+  const timestamp = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 
-      // Update the bot's message progressively
-      setMessages([
-        ...previousMessages,
-        { sender: "bot", text: currentText, timestamp },
-      ]);
-      
-      await new Promise((resolve) => setTimeout(resolve, typingSpeed));
+  for (let i = 0; i < text.length; i++) {
+    if (controller.signal.aborted) return; // If the typing is aborted, stop
+
+    currentText += text[i];
+
+    // Update the bot's message progressively
+    setMessages([
+      ...previousMessages,
+      { sender: "bot", text: currentText, timestamp, responseTime }, // Include response time
+    ]);
+
+    await new Promise((resolve) => setTimeout(resolve, typingSpeed));
+  }
+
+  setIsProgressing(false); // Finished typing
+
+  // After typing is finished, update the last message with response time and timestamp
+  setMessages((prevMessages) => {
+    const updatedMessages = [...prevMessages];
+    const lastMessage = updatedMessages[updatedMessages.length - 1];
+
+    if (lastMessage && lastMessage.sender === "bot") {
+      lastMessage.responseTime = responseTime;  // Store response time
+      lastMessage.timestamp = timestamp;         // Store the new timestamp
     }
+    return updatedMessages;
+  });
+};
+
+  const stopTyping = () => {
+    if (abortController) {
+      abortController.abort(); // Abort the typing process
+      setDots(""); // Clear the dots when stopped
+    }
+    setIsProgressing(false); // Stop typing effect
   };
 
   const formatText = (text) => {
@@ -83,28 +125,64 @@ function App() {
     ));
   };
 
+  const formatResponseTime = (responseTime) => {
+    if (responseTime >= 1000) {
+      // Convert to seconds and show one decimal place
+      return `${(responseTime / 1000).toFixed(1)}s`;
+    }
+    return `${responseTime}ms`;
+  };
+
+  useEffect(() => {
+    if (isProgressing) {
+      let dotCount = 0;
+      const interval = setInterval(() => {
+        setDots((prevDots) => prevDots + "."); // Add one dot at a time
+        dotCount += 1;
+        if (dotCount === 3) {
+          clearInterval(interval); // Stop after 3 dots
+        }
+      }, 1000); // Wait 1 second before adding another dot
+
+      // Clean up the interval when the component unmounts or isProgressing changes
+      return () => clearInterval(interval);
+    }
+  }, [isProgressing]);
+
   const generateDotAnimation = () => {
     return (
-      <div className="chat-bubble bg-gray-200 text-gray-500">
-        <p className="text-2xl">
+      <div className="chat-bubble bg-gray-400 text-gray-500">
+        <p className="text-s text-white block mt-1 animate-pulse">
           Loading
-          {Array.from({ length: 3 }, (_, i) => (
-            <span key={i} className="animate-pulse">.</span>
+          {dots.split("").map((dot, index) => (
+            <span key={index} className="animate-pulse">
+              {dot}
+            </span>
           ))}
         </p>
       </div>
     );
   };
 
+    useEffect(() => {
+    // Scroll to the bottom whenever messages are updated
+    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [messages]);  // Dependency on messages, so it runs whenever messages change
+
+
   return (
-    <div className="min-h-screen flex flex-col bg-gray-100 p-4">
-      <div className="flex-grow overflow-auto mb-4 space-y-2">
+    <div className="min-h-screen flex flex-col p-4">
+      <div className="fixed top-0 left-0 right-0 bg-gray-800 shadow-md py-3 flex justify-center items-center z-10">
+        <h1 className="text-xl font-semibold">FAQ-APP</h1>
+      </div>
+      <div className="flex-grow overflow-auto mb-4 space-y-2 pb-20"> {/* Added padding-bottom */}
         {messages.map((message, index) => (
           <div
             key={index}
             className={`chat ${
               message.sender === "user" ? "chat-end" : "chat-start"
             }`}
+            style={index === 0 ? { marginTop: "60px" } : {}}
           >
             <div
               className={`chat-bubble ${
@@ -113,31 +191,55 @@ function App() {
                   : message.error
                   ? "bg-gray-400 text-white" // Gray background for error
                   : "bg-green-500 text-white"
-              }`}
+              } } max-w-[70%]`}
             >
-              {formatText(message.text)}
-              <small className="text-xs text-gray-500 block mt-1">
-                {message.timestamp}
-              </small>
+
+              {/* Show message text */}
+              {formatText(message.text)} 
+
+              {/* Show timestamp for user messages immediately */}
+              {message.sender === "user" && (
+                <div className="mt-1">
+                  <small className="text-xs text-gray-300 block">{message.timestamp}</small>
+                </div>
+              )}
+
+              {/* Always show the timestamp and response time for all messages except the last one */}
+              {!isProgressing && message.sender === "bot" && index === messages.length - 1 && (
+                <div className="mt-1">
+                  <small className="text-xs text-gray-300 block">{message.timestamp}</small>
+                  {message.responseTime && (
+                    <small className="text-xs text-gray-300 block">
+                      Response time: {formatResponseTime(message.responseTime)}
+                    </small>
+                  )}
+                </div>
+              )}
+
+              {/* Show timestamp and response time immediately for all other messages */}
+              {message.sender === "bot" && index !== messages.length - 1 && (
+                <div className="mt-1">
+                  <small className="text-xs text-gray-300 block">{message.timestamp}</small>
+                  {message.responseTime && (
+                    <small className="text-xs text-gray-300 block">
+                      Response time: {formatResponseTime(message.responseTime)}
+                    </small>
+                  )}
+                </div>
+              )}
             </div>
           </div>
         ))}
+        <div ref={messagesEndRef} /> {/* Scroll target */}
         {waitingForResponse && (
           <div className="chat chat-start">
             {generateDotAnimation()} {/* Show the loading dots */}
           </div>
         )}
-        {isTyping && (
-          <div className="chat chat-start">
-            <div className="chat-bubble bg-green-500 text-white">
-              <p>Typing...</p>
-            </div>
-          </div>
-        )}
       </div>
-      <div className="flex space-x-2 flex-shrink-0">
+      <div className="flex space-x-2 flex-shrink-0 fixed bottom-0 left-0 right-0 z-10 p-4">
         <input
-          ref={inputRef} // Attach the reference to the input field
+          ref={inputRef} 
           type="text"
           className="input input-bordered flex-grow"
           placeholder="Type your question..."
@@ -145,8 +247,20 @@ function App() {
           onChange={(e) => setInput(e.target.value)}
           onKeyDown={(e) => e.key === "Enter" && handleSend()}
         />
-        <button className="btn btn-primary" onClick={handleSend}>
-          Send
+        <button
+          className={`btn ${isProgressing ? 'btn-gray' : 'btn-primary'}`}
+          onClick={isProgressing ? stopTyping : handleSend}  
+          disabled={false}  // Always enable the button (even while typing)
+        >
+          {isProgressing ? (
+            <>
+              <span className="mr-1">ⓧ</span> Stop
+            </>
+          ) : (
+            <>
+              <span className="mr-1">↑</span> Send
+            </>
+          )}
         </button>
       </div>
     </div>
