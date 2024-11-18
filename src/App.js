@@ -76,8 +76,8 @@ function App() {
   const controller = new AbortController(); // Create an AbortController to handle the stop action
   setAbortController(controller); // Store it for future reference
 
+  const typingSpeed = responseTime <= 20 ? 5 : text.length <= 250 ? 25 : 10;
 
-  const typingSpeed = text.length <= 200 ? 25 : 10;
   const timestamp = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 
   for (let i = 0; i < text.length; i++) {
@@ -139,8 +139,8 @@ function App() {
       const interval = setInterval(() => {
         setDots((prevDots) => prevDots + "."); // Add one dot at a time
         dotCount += 1;
-        if (dotCount === 3) {
-          clearInterval(interval); // Stop after 3 dots
+        if (dotCount === 4) {
+          clearInterval(interval); // Stop after 4 dots
         }
       }, 1000); // Wait 1 second before adding another dot
 
@@ -151,7 +151,7 @@ function App() {
 
   const generateDotAnimation = () => {
     return (
-      <div className="chat-bubble bg-gray-400 text-gray-500">
+      <div className="chat-bubble bg-gray-600 text-gray-500">
         <p className="text-s text-white block mt-1 animate-pulse">
           Loading
           {dots.split("").map((dot, index) => (
@@ -173,9 +173,9 @@ function App() {
   return (
     <div className="min-h-screen flex flex-col p-4">
       <div className="fixed top-0 left-0 right-0 bg-gray-800 shadow-md py-3 flex justify-center items-center z-10">
-        <h1 className="text-xl font-semibold">FAQ-APP</h1>
+        <h1 className="text-xl font-semibold">Frequency Asked Question</h1>
       </div>
-      <div className="flex-grow overflow-auto mb-4 space-y-2 pb-20"> {/* Added padding-bottom */}
+      <div className="flex-grow overflow-auto mb-4 space-y-2 pb-40"> {/* Added padding-bottom */}
         {messages.map((message, index) => (
           <div
             key={index}
@@ -187,10 +187,10 @@ function App() {
             <div
               className={`chat-bubble ${
                 message.sender === "user"
-                  ? "bg-blue-500 text-white"
+                  ? "bg-blue-600 text-white"
                   : message.error
-                  ? "bg-gray-400 text-white" // Gray background for error
-                  : "bg-green-500 text-white"
+                  ? "bg-gray-600 text-white" // Gray background for error
+                  : "bg-grey-900 text-white" // Green background for bot response
               } } max-w-[70%]`}
             >
 
